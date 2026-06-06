@@ -23,21 +23,18 @@ AIOC includes adapters for all providers copied from the Multica worker layer:
 | Copilot | `copilot` | JSON stream |
 | Antigravity | `agy` | plain text print mode |
 
-Binary path overrides:
+AIOC auto-loads config/env files before every command. Real shell environment variables override config files.
+
+Common env keys:
 
 ```bash
+AIOC_DEFAULT_PROVIDER=claude
+AIOC_DEFAULT_MODEL=claude-sonnet-4-6
 AIOC_CLAUDE_PATH=/path/to/claude
 AIOC_CODEX_PATH=/path/to/codex
 AIOC_PI_PATH=/path/to/pi
-AIOC_GEMINI_PATH=/path/to/gemini
-AIOC_CURSOR_PATH=/path/to/cursor-agent
-AIOC_KIMI_PATH=/path/to/kimi
-AIOC_KIRO_PATH=/path/to/kiro-cli
-AIOC_HERMES_PATH=/path/to/hermes
-AIOC_OPENCODE_PATH=/path/to/opencode
-AIOC_OPENCLAW_PATH=/path/to/openclaw
-AIOC_COPILOT_PATH=/path/to/copilot
-AIOC_ANTIGRAVITY_PATH=/path/to/agy
+AIOC_<PROVIDER>_PATH=/path/to/bin
+AIOC_<PROVIDER>_MODEL=model
 ```
 
 ## Commands
@@ -47,6 +44,8 @@ aioc agents
 aioc agents --json
 aioc agents --versions
 aioc doctor
+aioc config
+aioc config --json
 aioc models -p claude
 aioc models -p gemini --json
 aioc models-all --json
@@ -64,9 +63,9 @@ aioc run -p claude "explicit provider form"
 ## Run flags
 
 ```text
--p <provider>          provider name, or auto
+-p <provider>          provider name, or auto; default AIOC_DEFAULT_PROVIDER or auto
 --cwd <dir>            working directory
---model <model>        provider model
+--model <model>        provider model; default AIOC_DEFAULT_MODEL or AIOC_<PROVIDER>_MODEL
 --system <text>        system prompt
 --system-file <path>   append system prompt from file
 --prompt-file <path>   append prompt from file
@@ -76,6 +75,56 @@ aioc run -p claude "explicit provider form"
 --arg <arg>            provider-specific extra arg; repeatable
 --env KEY=VALUE        env var for child agent; repeatable
 --jsonl                emit JSONL events on stdout; default true
+```
+
+## Config discovery
+
+AIOC loads home config first, then project config from repository root toward the current working directory. Later files override earlier files; real environment variables override all files.
+
+Home:
+
+```text
+~/.config/aioc/config.env
+~/.config/aioc/config.yaml
+~/.aioc/config.env
+~/.aioc/config.yaml
+```
+
+Project tree:
+
+```text
+.env
+.aioc.config.env
+.aioc/config.env
+.aioc/config.yaml
+.config/aioc/config.env
+.config/aioc/config.yaml
+```
+
+YAML example:
+
+```yaml
+default_provider: claude
+default_model: claude-sonnet-4-6
+env:
+  AIOC_EXTRA: value
+providers:
+  claude:
+    path: /path/to/claude
+    model: claude-sonnet-4-6
+  codex:
+    path: /path/to/codex
+    model: gpt-5.5
+  openai:
+    base_url: http://127.0.0.1:8317/v1
+    api_key: your-api-key-1
+```
+
+Inspect loaded state:
+
+```bash
+aioc config
+aioc config --json
 ```
 
 ## JSONL event contract

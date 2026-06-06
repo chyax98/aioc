@@ -24,6 +24,7 @@ AIOC runs local AI agent CLIs through one command and emits normalized JSONL eve
 ```bash
 aioc agents --json
 aioc doctor
+aioc config
 aioc usage
 ```
 
@@ -58,10 +59,12 @@ claude codex pi gemini cursor kimi kiro hermes opencode openclaw copilot antigra
 
 ## Deeper instructions
 
-When unsure, ask AIOC for its own agent-facing prompt:
+When unsure, ask AIOC for its own agent-facing prompt/config guide:
 
 ```bash
 aioc prompt
+aioc usage
+aioc config
 ```
 
 Then follow that output rather than this shadow.

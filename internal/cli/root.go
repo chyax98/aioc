@@ -6,10 +6,14 @@ import (
 	"os"
 	"strings"
 
+	aiocconfig "aioc/internal/config"
 	"aioc/pkg/provider"
 )
 
 func Execute(args []string, version string) error {
+	if _, err := aiocconfig.LoadAuto(); err != nil {
+		return err
+	}
 	if len(args) == 0 {
 		printHelp(version)
 		return nil
@@ -24,6 +28,8 @@ func Execute(args []string, version string) error {
 		return models(args[1:])
 	case "models-all":
 		return allModels(args[1:])
+	case "config":
+		return configCmd(args[1:])
 	case "run":
 		return run(args[1:])
 	case "usage", "guide", "manual":
@@ -48,7 +54,7 @@ func normalizeRootArgs(args []string) []string {
 		return args
 	}
 	switch args[0] {
-	case "agents", "doctor", "models", "models-all", "run", "usage", "guide", "manual", "prompt", "skills", "skill", "version", "--version", "-v", "help", "--help", "-h":
+	case "agents", "doctor", "models", "models-all", "config", "run", "usage", "guide", "manual", "prompt", "skills", "skill", "version", "--version", "-v", "help", "--help", "-h":
 		return args
 	}
 	if _, ok := provider.SpecByName(args[0]); ok {
@@ -77,7 +83,8 @@ func printHelp(version string) {
 	fmt.Println("  aioc models -p <provider> [--json]")
 	fmt.Println("  aioc <prompt>                              # default: run with auto provider")
 	fmt.Println("  aioc <provider> <prompt>                   # provider shorthand, e.g. aioc claude \"review\"")
-	fmt.Println("  aioc run [--cwd dir] [--model model] <prompt>  # default provider: auto")
+	fmt.Println("  aioc config                               # show loaded config files")
+	fmt.Println("  aioc run [--cwd dir] [--model model] <prompt>  # default provider: config or auto")
 	fmt.Println("  aioc run -p <provider> <prompt>            # explicit provider when needed")
 	fmt.Println("  aioc models-all [--json]")
 	fmt.Println("  aioc usage")

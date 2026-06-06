@@ -26,9 +26,9 @@ func (s *stringSliceFlag) Set(v string) error {
 func run(args []string) error {
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	providerName := fs.String("p", "auto", "provider; default auto selects first available provider")
+	providerName := fs.String("p", defaultProvider(), "provider; default from AIOC_DEFAULT_PROVIDER or auto")
 	cwd := fs.String("cwd", ".", "working directory")
-	model := fs.String("model", "", "model")
+	model := fs.String("model", defaultModel(), "model; default from AIOC_DEFAULT_MODEL or provider config")
 	systemPrompt := fs.String("system", "", "system prompt")
 	systemFile := fs.String("system-file", "", "file containing system prompt")
 	promptFile := fs.String("prompt-file", "", "file containing prompt")
@@ -83,6 +83,9 @@ func run(args []string) error {
 	d := resolveDetection(*providerName)
 	if d.Status != "available" {
 		return fmt.Errorf("provider %q unavailable: %s", *providerName, d.Error)
+	}
+	if *model == "" {
+		*model = providerDefaultModel(d.Provider)
 	}
 
 	ctx := context.Background()
@@ -160,6 +163,22 @@ func parseEnvFlags(values []string) (map[string]string, error) {
 		out[key] = val
 	}
 	return out, nil
+}
+
+func defaultProvider() string {
+	if v := strings.TrimSpace(os.Getenv("AIOC_DEFAULT_PROVIDER")); v != "" {
+		return v
+	}
+	return "auto"
+}
+
+func defaultModel() string {
+	return strings.TrimSpace(os.Getenv("AIOC_DEFAULT_MODEL"))
+}
+
+func providerDefaultModel(providerName string) string {
+	key := "AIOC_" + strings.ToUpper(strings.ReplaceAll(strings.ReplaceAll(providerName, "-", "_"), ".", "_")) + "_MODEL"
+	return strings.TrimSpace(os.Getenv(key))
 }
 
 func resolveDetection(name string) provider.Detection {

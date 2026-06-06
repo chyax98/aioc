@@ -20,6 +20,9 @@ Core commands:
   aioc models-all [--json]
       List every provider's model catalog.
 
+  aioc config [--json]
+      Show discovered config files and effective AIOC_* settings.
+
   aioc <prompt>
       Run prompt with auto-selected provider.
 
@@ -27,7 +30,7 @@ Core commands:
       Provider shorthand, e.g. aioc claude "review current changes".
 
   aioc run [flags] <prompt>
-      Run prompt and stream normalized JSONL events. Provider defaults to auto.
+      Run prompt and stream normalized JSONL events. Provider defaults to config or auto.
 
   aioc run -p <provider> [flags] <prompt>
       Explicit provider form.
@@ -45,9 +48,9 @@ Providers:
 
 Run flags:
 
-  -p <provider>          provider name, or auto; default auto
+  -p <provider>          provider name, or auto; default AIOC_DEFAULT_PROVIDER or auto
   --cwd <dir>            working directory
-  --model <model>        provider model
+  --model <model>        provider model; default AIOC_DEFAULT_MODEL or AIOC_<PROVIDER>_MODEL
   --system <text>        system prompt
   --system-file <path>   append system prompt from file
   --prompt-file <path>   append prompt from file
@@ -71,6 +74,7 @@ Examples:
 
   aioc agents --json
   aioc doctor
+  aioc config
   aioc models -p claude
   aioc "用默认 agent 回答 hello"
   aioc claude --cwd . "review current changes"
@@ -78,12 +82,48 @@ Examples:
   aioc pi --model openai/gpt-5.5 "用中文总结当前目录"
   aioc run --cwd . --prompt-file task.md
 
-Path overrides:
+Config auto-discovery:
 
+  AIOC loads config before every command. Real environment variables win over files.
+  Later local files override earlier/home files.
+
+  Home:
+    ~/.config/aioc/config.env
+    ~/.config/aioc/config.yaml
+    ~/.aioc/config.env
+    ~/.aioc/config.yaml
+
+  Project tree, from repo root toward cwd:
+    .env
+    .aioc.config.env
+    .aioc/config.env
+    .aioc/config.yaml
+    .config/aioc/config.env
+    .config/aioc/config.yaml
+
+Env keys:
+
+  AIOC_DEFAULT_PROVIDER=claude
+  AIOC_DEFAULT_MODEL=...
   AIOC_CLAUDE_PATH=/path/to/claude
   AIOC_CODEX_PATH=/path/to/codex
   AIOC_PI_PATH=/path/to/pi
   AIOC_<PROVIDER>_PATH=/path/to/bin
+  AIOC_<PROVIDER>_MODEL=model
+
+YAML example:
+
+  default_provider: claude
+  default_model: claude-sonnet-4-6
+  env:
+    AIOC_EXTRA: value
+  providers:
+    claude:
+      path: /path/to/claude
+      model: claude-sonnet-4-6
+    codex:
+      path: /path/to/codex
+      model: gpt-5.5
 
 Usage shadow:
 
@@ -101,9 +141,10 @@ Use this workflow:
 
    aioc agents --json
 
-2. Inspect health when unsure:
+2. Inspect health/config when unsure:
 
    aioc doctor
+   aioc config
 
 3. Pick provider:
 
