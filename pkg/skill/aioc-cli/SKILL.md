@@ -30,10 +30,11 @@ aioc usage
 ## Run an agent
 
 ```bash
-aioc run -p claude --cwd . "review current changes"
-aioc run -p codex --cwd . "fix failing tests"
-aioc run -p pi --cwd . "用中文总结当前目录"
-aioc run -p auto --cwd . "pick first available provider"
+aioc "quick question"                    # default auto provider
+aioc claude --cwd . "review current changes"
+aioc codex --cwd . "fix failing tests"
+aioc pi --cwd . "用中文总结当前目录"
+aioc run -p claude --cwd . "explicit provider form"
 ```
 
 ## Parse contract

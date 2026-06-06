@@ -26,7 +26,7 @@ func (s *stringSliceFlag) Set(v string) error {
 func run(args []string) error {
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	providerName := fs.String("p", "", "provider; use auto to select first available provider")
+	providerName := fs.String("p", "auto", "provider; default auto selects first available provider")
 	cwd := fs.String("cwd", ".", "working directory")
 	model := fs.String("model", "", "model")
 	systemPrompt := fs.String("system", "", "system prompt")
@@ -45,9 +45,6 @@ func run(args []string) error {
 	}
 	if !*jsonl {
 		return errors.New("only JSONL stdout is supported")
-	}
-	if *providerName == "" {
-		return errors.New("missing provider: -p <provider>")
 	}
 	promptParts := fs.Args()
 	prompt := strings.TrimSpace(strings.Join(promptParts, " "))

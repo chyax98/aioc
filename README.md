@@ -54,10 +54,11 @@ aioc usage
 aioc prompt
 aioc skills get
 aioc skills install
-aioc run -p claude "hello"
-aioc run -p codex --cwd /repo "fix tests"
-aioc run -p pi --model openai/gpt-5.1 "review this repo"
-aioc run -p auto "use the first available provider"
+aioc "hello"
+aioc claude "hello"
+aioc codex --cwd /repo "fix tests"
+aioc pi --model openai/gpt-5.1 "review this repo"
+aioc run -p claude "explicit provider form"
 ```
 
 ## Run flags

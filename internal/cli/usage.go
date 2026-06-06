@@ -20,8 +20,17 @@ Core commands:
   aioc models-all [--json]
       List every provider's model catalog.
 
+  aioc <prompt>
+      Run prompt with auto-selected provider.
+
+  aioc <provider> <prompt>
+      Provider shorthand, e.g. aioc claude "review current changes".
+
+  aioc run [flags] <prompt>
+      Run prompt and stream normalized JSONL events. Provider defaults to auto.
+
   aioc run -p <provider> [flags] <prompt>
-      Run one provider and stream normalized JSONL events.
+      Explicit provider form.
 
   aioc usage
       Print this usage guide.
@@ -36,7 +45,7 @@ Providers:
 
 Run flags:
 
-  -p <provider>          provider name, or auto
+  -p <provider>          provider name, or auto; default auto
   --cwd <dir>            working directory
   --model <model>        provider model
   --system <text>        system prompt
@@ -63,10 +72,11 @@ Examples:
   aioc agents --json
   aioc doctor
   aioc models -p claude
-  aioc run -p claude --cwd . "review current changes"
-  aioc run -p codex --cwd /repo --timeout 20m "fix tests"
-  aioc run -p pi --model openai/gpt-5.5 "用中文总结当前目录"
-  aioc run -p auto --cwd . --prompt-file task.md
+  aioc "用默认 agent 回答 hello"
+  aioc claude --cwd . "review current changes"
+  aioc codex --cwd /repo --timeout 20m "fix tests"
+  aioc pi --model openai/gpt-5.5 "用中文总结当前目录"
+  aioc run --cwd . --prompt-file task.md
 
 Path overrides:
 
@@ -105,6 +115,8 @@ Use this workflow:
 
 4. Run task:
 
+   aioc --cwd <repo> "<task>"
+   aioc <provider> --cwd <repo> "<task>"
    aioc run -p <provider> --cwd <repo> "<task>"
 
 5. Parse stdout JSONL. Ignore stderr except diagnostics.
@@ -115,9 +127,10 @@ Useful commands:
    aioc usage
    aioc agents --json
    aioc models -p <provider> --json
-   aioc run -p claude --cwd . "review current changes"
-   aioc run -p codex --cwd . --timeout 20m "fix failing tests"
-   aioc run -p pi --cwd . "summarize repo in Chinese"
+   aioc "quick question"
+   aioc claude --cwd . "review current changes"
+   aioc codex --cwd . --timeout 20m "fix failing tests"
+   aioc pi --cwd . "summarize repo in Chinese"
 
 Event schema:
 
