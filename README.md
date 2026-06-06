@@ -37,6 +37,8 @@ AIOC_AGENT_TOOL_WATCHDOG=0
 AIOC_AUTO_PRIORITY=claude,codex,pi
 AIOC_THINKING_LEVEL=high
 AIOC_MCP_CONFIG=.aioc/mcp.json
+AIOC_RUNS_DIR=~/.aioc/runs
+AIOC_SAVE_RUNS=1
 AIOC_CLAUDE_PATH=/path/to/claude
 AIOC_CODEX_PATH=/path/to/codex
 AIOC_PI_PATH=/path/to/pi
@@ -58,6 +60,8 @@ aioc agents --versions
 aioc doctor
 aioc config
 aioc config --json
+aioc runs output latest
+aioc runs events latest
 aioc models -p claude
 aioc models -p gemini --json
 aioc models-all --json
@@ -96,6 +100,30 @@ aioc run -p claude "explicit provider form"
 --arg <arg>            provider custom arg appended after config args; repeatable
 --env KEY=VALUE        env var for child agent; repeatable
 --jsonl                emit JSONL events on stdout; default true
+```
+
+## Run history
+
+AIOC tees every run's stdout JSONL into a local history file by default:
+
+```text
+~/.aioc/runs/<run_id>.jsonl
+```
+
+The first `session` event includes `meta.run_id` and `meta.events_path` when saving succeeds. Read saved runs:
+
+```bash
+aioc runs                  # list recent run ids
+aioc runs output latest    # print final done.output
+aioc runs events latest    # print raw JSONL
+aioc runs path latest      # print JSONL path
+```
+
+Control history:
+
+```bash
+AIOC_RUNS_DIR=~/.aioc/runs
+AIOC_SAVE_RUNS=0           # disable saving
 ```
 
 ## Config discovery

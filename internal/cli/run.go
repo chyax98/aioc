@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"strconv"
@@ -143,8 +144,21 @@ func run(args []string) error {
 		return err
 	}
 
-	w := events.NewWriter(os.Stdout)
-	_ = w.Write(events.Event{Type: events.TypeSession, Provider: d.Provider, Status: "starting", Meta: map[string]any{"path": d.Path, "protocol": d.Protocol, "cwd": *cwd, "launch": d.Launch, "model": *model}})
+	history, err := openRunHistory(d.Provider)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: save run history failed: %v\n", err)
+	}
+	defer history.Close()
+
+	out := io.Writer(os.Stdout)
+	meta := map[string]any{"path": d.Path, "protocol": d.Protocol, "cwd": *cwd, "launch": d.Launch, "model": *model}
+	if history != nil {
+		out = io.MultiWriter(os.Stdout, history.file)
+		meta["run_id"] = history.ID
+		meta["events_path"] = history.Path
+	}
+	w := events.NewWriter(out)
+	_ = w.Write(events.Event{Type: events.TypeSession, Provider: d.Provider, Status: "starting", Meta: meta})
 
 	session, err := backend.Execute(ctx, prompt, agentpkg.ExecOptions{
 		Cwd:                       *cwd,

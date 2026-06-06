@@ -26,6 +26,7 @@ func TestNormalizeRootArgs(t *testing.T) {
 		{name: "root flags", in: []string{"--cwd", ".", "hello"}, want: []string{"run", "--cwd", ".", "hello"}},
 		{name: "provider shorthand", in: []string{"claude", "--cwd", ".", "review"}, want: []string{"run", "-p", "claude", "--cwd", ".", "review"}},
 		{name: "known command", in: []string{"agents", "--json"}, want: []string{"agents", "--json"}},
+		{name: "runs command", in: []string{"runs", "output", "latest"}, want: []string{"runs", "output", "latest"}},
 		{name: "run command", in: []string{"run", "hello"}, want: []string{"run", "hello"}},
 	}
 	for _, tt := range tests {

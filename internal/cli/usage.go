@@ -23,6 +23,15 @@ Core commands:
   aioc config [--json] [--show-secrets]
       Show discovered config files and effective AIOC_* settings. JSON is redacted unless --show-secrets.
 
+  aioc runs [list]
+      List saved run ids. Runs are saved as JSONL under AIOC_RUNS_DIR or ~/.aioc/runs.
+
+  aioc runs output [latest|id]
+      Print the final done.output from a saved run.
+
+  aioc runs events [latest|id]
+      Print the raw saved JSONL event stream.
+
   aioc <prompt>
       Run prompt with auto-selected provider.
 
@@ -70,6 +79,12 @@ Run flags:
   --env KEY=VALUE        env var for child agent; repeatable
   --jsonl                emit JSONL events on stdout; default true
 
+Run history:
+
+  Each run tees stdout JSONL into ~/.aioc/runs/<run_id>.jsonl by default.
+  The session event meta includes run_id and events_path when saving succeeds.
+  Disable with AIOC_SAVE_RUNS=0. Override directory with AIOC_RUNS_DIR=/path.
+
 JSONL event types:
 
   session, status, text, thinking, tool_use, tool_result, error, done
@@ -84,6 +99,7 @@ Examples:
   aioc agents --json
   aioc doctor
   aioc config
+  aioc runs output latest
   aioc models -p claude
   aioc "用默认 agent 回答 hello"
   aioc claude --cwd . "review current changes"
@@ -124,6 +140,8 @@ Env keys:
   AIOC_AUTO_PRIORITY=claude,codex,pi
   AIOC_THINKING_LEVEL=high
   AIOC_MCP_CONFIG=.aioc/mcp.json
+  AIOC_RUNS_DIR=~/.aioc/runs
+  AIOC_SAVE_RUNS=1
   AIOC_<PROVIDER>_PATH=/path/to/bin
   AIOC_<PROVIDER>_MODEL=model
   AIOC_<PROVIDER>_THINKING_LEVEL=high
@@ -196,12 +214,14 @@ Use this workflow:
 5. Parse stdout JSONL. Ignore stderr except diagnostics.
    Wait for {"type":"done",...}. Success only when done.status == "completed".
    done.usage contains per-model token counts when provider reports them.
+   Each run is also saved to ~/.aioc/runs by default; use aioc runs output latest for final text.
 
 Useful commands:
 
    aioc usage
    aioc agents --json
    aioc models -p <provider> --json
+   aioc runs output latest
    aioc "quick question"
    aioc claude --cwd . "review current changes"
    aioc codex --cwd . --timeout 20m --inactivity-timeout 10m "fix failing tests"

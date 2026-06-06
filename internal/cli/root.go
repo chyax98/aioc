@@ -31,6 +31,8 @@ func Execute(args []string, version string) error {
 		return allModels(args[1:])
 	case "config":
 		return configCmd(args[1:])
+	case "runs", "history":
+		return runs(args[1:])
 	case "run":
 		return run(args[1:])
 	case "usage", "guide", "manual":
@@ -75,7 +77,7 @@ func normalizeRootArgs(args []string) []string {
 		return args
 	}
 	switch args[0] {
-	case "agents", "doctor", "models", "models-all", "config", "run", "usage", "guide", "manual", "prompt", "skills", "skill", "version", "--version", "-v", "help", "--help", "-h":
+	case "agents", "doctor", "models", "models-all", "config", "runs", "history", "run", "usage", "guide", "manual", "prompt", "skills", "skill", "version", "--version", "-v", "help", "--help", "-h":
 		return args
 	}
 	if _, ok := provider.SpecByName(args[0]); ok {
@@ -106,6 +108,8 @@ func printHelp(version string) {
 	fmt.Println("  aioc <provider> <prompt>                   # provider shorthand, e.g. aioc claude \"review\"")
 	fmt.Println("  aioc [--config path] [--no-config] ...")
 	fmt.Println("  aioc config                               # show loaded config files")
+	fmt.Println("  aioc runs output [latest|id]              # print saved final output")
+	fmt.Println("  aioc runs events [latest|id]              # print saved JSONL events")
 	fmt.Println("  aioc run [--cwd dir] [--model model] [--thinking level] <prompt>")
 	fmt.Println("  aioc run -p <provider> <prompt>            # explicit provider when needed")
 	fmt.Println("  aioc models-all [--json]")
