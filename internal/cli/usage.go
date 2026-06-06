@@ -20,8 +20,8 @@ Core commands:
   aioc models-all [--json]
       List every provider's model catalog.
 
-  aioc config [--json]
-      Show discovered config files and effective AIOC_* settings.
+  aioc config [--json] [--show-secrets]
+      Show discovered config files and effective AIOC_* settings. JSON is redacted unless --show-secrets.
 
   aioc <prompt>
       Run prompt with auto-selected provider.
@@ -55,9 +55,18 @@ Run flags:
   --system-file <path>   append system prompt from file
   --prompt-file <path>   append prompt from file
   --resume <id>          resume provider session
-  --timeout <duration>   provider run timeout
+  --timeout <duration>   provider run timeout; default AIOC_AGENT_TIMEOUT
+  --inactivity-timeout <duration>
+                         semantic inactivity timeout; default AIOC_CODEX_SEMANTIC_INACTIVITY_TIMEOUT
+  --idle-watchdog <duration>
+                         force-stop when backend emits no messages; default AIOC_AGENT_IDLE_WATCHDOG
+  --tool-watchdog <duration>
+                         force-stop when one tool stays in flight silently; default AIOC_AGENT_TOOL_WATCHDOG
+  --thinking <level>     reasoning/thinking level; validated against local model catalog when possible
+  --max-turns <n>        max turns for providers that support it
   --mcp-config <path>    MCP config JSON file
-  --arg <arg>            provider-specific extra arg; repeatable
+  --extra-arg <arg>      provider default arg appended before --arg; repeatable
+  --arg <arg>            provider custom arg appended after config args; repeatable
   --env KEY=VALUE        env var for child agent; repeatable
   --jsonl                emit JSONL events on stdout; default true
 
@@ -108,19 +117,43 @@ Env keys:
   AIOC_CLAUDE_PATH=/path/to/claude
   AIOC_CODEX_PATH=/path/to/codex
   AIOC_PI_PATH=/path/to/pi
+  AIOC_AGENT_TIMEOUT=0
+  AIOC_CODEX_SEMANTIC_INACTIVITY_TIMEOUT=10m
+  AIOC_AGENT_IDLE_WATCHDOG=0
+  AIOC_AGENT_TOOL_WATCHDOG=0
+  AIOC_AUTO_PRIORITY=claude,codex,pi
+  AIOC_THINKING_LEVEL=high
+  AIOC_MCP_CONFIG=.aioc/mcp.json
   AIOC_<PROVIDER>_PATH=/path/to/bin
   AIOC_<PROVIDER>_MODEL=model
+  AIOC_<PROVIDER>_THINKING_LEVEL=high
+  AIOC_<PROVIDER>_MAX_TURNS=20
+  AIOC_<PROVIDER>_ARGS='--flag value'
+  AIOC_<PROVIDER>_MCP_CONFIG=.aioc/provider-mcp.json
+  AIOC_<PROVIDER>_ENV_KEY=value
 
 YAML example:
 
   default_provider: claude
   default_model: claude-sonnet-4-6
+  thinking_level: high
+  agent_timeout: 0
+  codex_semantic_inactivity_timeout: 10m
+  agent_idle_watchdog: 0
+  agent_tool_watchdog: 0
+  auto_priority: [claude, codex, pi]
+  mcp_config: .aioc/mcp.json
   env:
     AIOC_EXTRA: value
   providers:
     claude:
       path: /path/to/claude
       model: claude-sonnet-4-6
+      thinking_level: high
+      max_turns: 20
+      args: ["--max-budget-usd", "1.00"]
+      child_env:
+        CLAUDE_EXAMPLE: value
     codex:
       path: /path/to/codex
       model: gpt-5.5
@@ -162,6 +195,7 @@ Use this workflow:
 
 5. Parse stdout JSONL. Ignore stderr except diagnostics.
    Wait for {"type":"done",...}. Success only when done.status == "completed".
+   done.usage contains per-model token counts when provider reports them.
 
 Useful commands:
 
@@ -170,7 +204,8 @@ Useful commands:
    aioc models -p <provider> --json
    aioc "quick question"
    aioc claude --cwd . "review current changes"
-   aioc codex --cwd . --timeout 20m "fix failing tests"
+   aioc codex --cwd . --timeout 20m --inactivity-timeout 10m "fix failing tests"
+   aioc claude --thinking high --max-turns 20 "investigate"
    aioc pi --cwd . "summarize repo in Chinese"
 
 Event schema:

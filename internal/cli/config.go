@@ -5,17 +5,23 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strings"
 
 	aiocconfig "aioc/internal/config"
 )
 
 func configCmd(args []string) error {
 	jsonOut := hasFlag(args, "--json")
+	showSecrets := hasFlag(args, "--show-secrets")
 	loaded := aiocconfig.Loaded()
 	if jsonOut {
+		out := loaded
+		if !showSecrets {
+			out.Env = redactEnvMap(out.Env)
+		}
 		enc := json.NewEncoder(stdout())
 		enc.SetIndent("", "  ")
-		return enc.Encode(loaded)
+		return enc.Encode(out)
 	}
 	fmt.Println("config files:")
 	if len(loaded.Paths) == 0 {
@@ -28,17 +34,29 @@ func configCmd(args []string) error {
 	fmt.Println("effective:")
 	for _, key := range interestingEnvKeys() {
 		if value := os.Getenv(key); value != "" {
-			fmt.Printf("  %s=%s\n", key, redactConfigValue(key, value))
+			if showSecrets {
+				fmt.Printf("  %s=%s\n", key, value)
+			} else {
+				fmt.Printf("  %s=%s\n", key, redactConfigValue(key, value))
+			}
 		}
 	}
 	return nil
 }
 
+func redactEnvMap(in map[string]string) map[string]string {
+	out := map[string]string{}
+	for k, v := range in {
+		out[k] = redactConfigValue(k, v)
+	}
+	return out
+}
+
 func interestingEnvKeys() []string {
-	keys := []string{"AIOC_DEFAULT_PROVIDER", "AIOC_DEFAULT_MODEL"}
+	keys := []string{"AIOC_DEFAULT_PROVIDER", "AIOC_DEFAULT_MODEL", "AIOC_AGENT_TIMEOUT", "AIOC_CODEX_SEMANTIC_INACTIVITY_TIMEOUT", "AIOC_AUTO_PRIORITY", "AIOC_THINKING_LEVEL"}
 	for _, kv := range os.Environ() {
 		key, _, ok := splitEnv(kv)
-		if ok && len(key) > 5 && key[:5] == "AIOC_" {
+		if ok && strings.HasPrefix(key, "AIOC_") {
 			keys = append(keys, key)
 		}
 	}
@@ -78,20 +96,9 @@ func redactConfigValue(key, value string) string {
 }
 
 func containsSecretWord(key string) bool {
+	key = strings.ToUpper(key)
 	for _, word := range []string{"KEY", "TOKEN", "SECRET", "PASSWORD"} {
-		if contains(key, word) {
-			return true
-		}
-	}
-	return false
-}
-
-func contains(s, sub string) bool {
-	if sub == "" {
-		return true
-	}
-	for i := 0; i+len(sub) <= len(s); i++ {
-		if s[i:i+len(sub)] == sub {
+		if strings.Contains(key, word) {
 			return true
 		}
 	}

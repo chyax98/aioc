@@ -5,6 +5,17 @@ import (
 	"testing"
 )
 
+func TestSplitGlobalConfigArgs(t *testing.T) {
+	got, opts := splitGlobalConfigArgs([]string{"--config", "a.yaml", "--no-config", "claude", "hi", "--config=b.yaml"})
+	want := []string{"claude", "hi"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("args = %v, want %v", got, want)
+	}
+	if !opts.NoConfig || !reflect.DeepEqual(opts.Paths, []string{"a.yaml", "b.yaml"}) {
+		t.Fatalf("opts = %+v", opts)
+	}
+}
+
 func TestNormalizeRootArgs(t *testing.T) {
 	tests := []struct {
 		name string

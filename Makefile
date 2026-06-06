@@ -2,7 +2,7 @@ GO ?= go
 BINARY ?= aioc
 OUT ?= bin/$(BINARY)
 
-.PHONY: test build check proto-check run agents doctor
+.PHONY: test build check proto-check smoke run agents doctor
 
 test:
 	$(GO) test ./...
@@ -15,6 +15,9 @@ check: test build
 
 proto-check:
 	proto exec go -- make check GO=go
+
+smoke: build
+	scripts/smoke.sh
 
 run:
 	$(GO) run ./cmd/aioc run $(ARGS)

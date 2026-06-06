@@ -3,7 +3,6 @@ package provider
 import (
 	"context"
 	"os"
-	"os/exec"
 	"strings"
 	"time"
 
@@ -62,7 +61,7 @@ func Detect(ctx context.Context, spec Spec, withVersion bool) Detection {
 		ModelSelectionSupported: agent.ModelSelectionSupported(spec.Name),
 		EnvPath:                 spec.EnvPath,
 	}
-	path, err := exec.LookPath(cmd)
+	path, err := lookPathWithShellFallback(cmd, spec.Command)
 	if err != nil {
 		d.Error = err.Error()
 		return d

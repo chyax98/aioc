@@ -5,25 +5,47 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 
+	"github.com/mattn/go-shellwords"
 	"gopkg.in/yaml.v3"
 )
 
 type FileConfig struct {
-	DefaultProvider string                    `yaml:"default_provider"`
-	DefaultModel    string                    `yaml:"default_model"`
-	Env             map[string]string         `yaml:"env"`
-	Providers       map[string]ProviderConfig `yaml:"providers"`
+	DefaultProvider                string                    `yaml:"default_provider"`
+	DefaultModel                   string                    `yaml:"default_model"`
+	ThinkingLevel                  string                    `yaml:"thinking_level"`
+	AgentTimeout                   string                    `yaml:"agent_timeout"`
+	CodexSemanticInactivityTimeout string                    `yaml:"codex_semantic_inactivity_timeout"`
+	AgentIdleWatchdog              string                    `yaml:"agent_idle_watchdog"`
+	AgentToolWatchdog              string                    `yaml:"agent_tool_watchdog"`
+	AutoPriority                   []string                  `yaml:"auto_priority"`
+	McpConfig                      string                    `yaml:"mcp_config"`
+	Env                            map[string]string         `yaml:"env"`
+	Providers                      map[string]ProviderConfig `yaml:"providers"`
 }
 
 type ProviderConfig struct {
-	Path    string `yaml:"path"`
-	Command string `yaml:"command"`
-	Model   string `yaml:"model"`
-	BaseURL string `yaml:"base_url"`
-	APIKey  string `yaml:"api_key"`
+	Path            string            `yaml:"path"`
+	Command         string            `yaml:"command"`
+	Model           string            `yaml:"model"`
+	ThinkingLevel   string            `yaml:"thinking_level"`
+	MaxTurns        int               `yaml:"max_turns"`
+	Args            []string          `yaml:"args"`
+	McpConfig       string            `yaml:"mcp_config"`
+	BaseURL         string            `yaml:"base_url"`
+	APIKey          string            `yaml:"api_key"`
+	Env             map[string]string `yaml:"env"`
+	ChildEnv        map[string]string `yaml:"child_env"`
+	CustomEnv       map[string]string `yaml:"custom_env"`
+	InactivityTimer string            `yaml:"semantic_inactivity_timeout"`
+}
+
+type LoadOptions struct {
+	NoConfig bool
+	Paths    []string
 }
 
 type LoadResult struct {
@@ -38,8 +60,23 @@ var (
 )
 
 func LoadAuto() (LoadResult, error) {
+	return LoadAutoWithOptions(LoadOptions{})
+}
+
+func LoadAutoWithOptions(opts LoadOptions) (LoadResult, error) {
 	loadOnce.Do(func() {
-		loaded, loadErr = LoadPaths(discoverConfigPaths())
+		if opts.NoConfig || truthy(os.Getenv("AIOC_NO_CONFIG")) {
+			loaded = LoadResult{Paths: []string{}, Env: map[string]string{}}
+			return
+		}
+		paths := opts.Paths
+		if len(paths) == 0 {
+			paths = pathsFromEnv("AIOC_CONFIG")
+		}
+		if len(paths) == 0 {
+			paths = discoverConfigPaths()
+		}
+		loaded, loadErr = LoadPaths(paths)
 	})
 	return loaded, loadErr
 }
@@ -96,7 +133,7 @@ func discoverConfigPaths() []string {
 	if err != nil || cwd == "" {
 		return paths
 	}
-	for _, dir := range ancestorDirs(cwd) {
+	for _, dir := range projectDirs(cwd) {
 		paths = append(paths,
 			filepath.Join(dir, ".env"),
 			filepath.Join(dir, ".aioc.config.env"),
@@ -111,21 +148,40 @@ func discoverConfigPaths() []string {
 	return paths
 }
 
-func ancestorDirs(cwd string) []string {
+func projectDirs(cwd string) []string {
+	cwd = filepath.Clean(cwd)
+	root := findGitRoot(cwd)
+	if root == "" {
+		return []string{cwd}
+	}
 	var rev []string
-	for {
-		rev = append(rev, cwd)
-		parent := filepath.Dir(cwd)
-		if parent == cwd {
+	for dir := cwd; ; dir = filepath.Dir(dir) {
+		rev = append(rev, dir)
+		if dir == root {
 			break
 		}
-		cwd = parent
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
 	}
 	out := make([]string, 0, len(rev))
 	for i := len(rev) - 1; i >= 0; i-- {
 		out = append(out, rev[i])
 	}
 	return out
+}
+
+func findGitRoot(cwd string) string {
+	for dir := filepath.Clean(cwd); ; dir = filepath.Dir(dir) {
+		if fileOrDirExists(filepath.Join(dir, ".git")) {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return ""
+		}
+	}
 }
 
 func parseConfigFile(path string) (map[string]string, error) {
@@ -147,33 +203,41 @@ func parseYAML(path string) (map[string]string, error) {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
 	}
 	out := map[string]string{}
-	if cfg.DefaultProvider != "" {
-		out["AIOC_DEFAULT_PROVIDER"] = cfg.DefaultProvider
-	}
-	if cfg.DefaultModel != "" {
-		out["AIOC_DEFAULT_MODEL"] = cfg.DefaultModel
-	}
+	set(out, "AIOC_DEFAULT_PROVIDER", cfg.DefaultProvider)
+	set(out, "AIOC_DEFAULT_MODEL", cfg.DefaultModel)
+	set(out, "AIOC_THINKING_LEVEL", cfg.ThinkingLevel)
+	set(out, "AIOC_AGENT_TIMEOUT", cfg.AgentTimeout)
+	set(out, "AIOC_CODEX_SEMANTIC_INACTIVITY_TIMEOUT", cfg.CodexSemanticInactivityTimeout)
+	set(out, "AIOC_AGENT_IDLE_WATCHDOG", cfg.AgentIdleWatchdog)
+	set(out, "AIOC_AGENT_TOOL_WATCHDOG", cfg.AgentToolWatchdog)
+	set(out, "AIOC_AUTO_PRIORITY", strings.Join(cfg.AutoPriority, ","))
+	set(out, "AIOC_MCP_CONFIG", cfg.McpConfig)
 	for k, v := range cfg.Env {
-		if strings.TrimSpace(k) != "" {
-			out[strings.TrimSpace(k)] = v
-		}
+		set(out, k, v)
 	}
 	for name, p := range cfg.Providers {
 		prefix := "AIOC_" + providerEnvName(name) + "_"
-		if p.Path != "" {
-			out[prefix+"PATH"] = p.Path
+		set(out, prefix+"PATH", firstNonEmpty(p.Command, p.Path))
+		set(out, prefix+"MODEL", p.Model)
+		set(out, prefix+"THINKING_LEVEL", p.ThinkingLevel)
+		if p.MaxTurns > 0 {
+			set(out, prefix+"MAX_TURNS", strconv.Itoa(p.MaxTurns))
 		}
-		if p.Command != "" {
-			out[prefix+"PATH"] = p.Command
+		if len(p.Args) > 0 {
+			set(out, prefix+"ARGS", shellQuoteJoin(p.Args))
 		}
-		if p.Model != "" {
-			out[prefix+"MODEL"] = p.Model
+		set(out, prefix+"MCP_CONFIG", p.McpConfig)
+		set(out, prefix+"BASE_URL", p.BaseURL)
+		set(out, prefix+"API_KEY", p.APIKey)
+		set(out, prefix+"SEMANTIC_INACTIVITY_TIMEOUT", p.InactivityTimer)
+		for k, v := range p.Env {
+			set(out, k, v)
 		}
-		if p.BaseURL != "" {
-			out[prefix+"BASE_URL"] = p.BaseURL
+		for k, v := range p.ChildEnv {
+			set(out, prefix+"ENV_"+providerEnvName(k), v)
 		}
-		if p.APIKey != "" {
-			out[prefix+"API_KEY"] = p.APIKey
+		for k, v := range p.CustomEnv {
+			set(out, prefix+"ENV_"+providerEnvName(k), v)
 		}
 	}
 	return out, nil
@@ -213,6 +277,43 @@ func parseEnvFile(path string) (map[string]string, error) {
 	return out, nil
 }
 
+func ParseShellArgsEnv(name string) ([]string, error) {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return nil, nil
+	}
+	args, err := shellwords.Parse(raw)
+	if err != nil {
+		return nil, fmt.Errorf("invalid %s: %w", name, err)
+	}
+	return args, nil
+}
+
+func ParseDurationEnv(name string) (string, bool) {
+	v := strings.TrimSpace(os.Getenv(name))
+	return v, v != ""
+}
+
+func pathsFromEnv(name string) []string {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return nil
+	}
+	return splitList(raw)
+}
+
+func splitList(raw string) []string {
+	parts := strings.FieldsFunc(raw, func(r rune) bool { return r == ',' || r == filepath.ListSeparator })
+	out := []string{}
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 func unquoteEnvValue(value string) string {
 	if len(value) >= 2 {
 		quote := value[0]
@@ -230,9 +331,47 @@ func providerEnvName(name string) string {
 	return strings.ToUpper(strings.ReplaceAll(strings.ReplaceAll(name, "-", "_"), ".", "_"))
 }
 
+func shellQuoteJoin(args []string) string {
+	out := make([]string, 0, len(args))
+	for _, arg := range args {
+		out = append(out, strconv.Quote(arg))
+	}
+	return strings.Join(out, " ")
+}
+
+func set(out map[string]string, key, value string) {
+	key = strings.TrimSpace(key)
+	if key != "" && value != "" {
+		out[key] = value
+	}
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+func truthy(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "1", "true", "yes", "y", "on":
+		return true
+	default:
+		return false
+	}
+}
+
 func fileExists(path string) bool {
 	st, err := os.Stat(path)
 	return err == nil && !st.IsDir()
+}
+
+func fileOrDirExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 func unique(paths []string) []string {

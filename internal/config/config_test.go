@@ -16,19 +16,31 @@ func TestLoadPathsEnvAndYAML(t *testing.T) {
 	if err := os.WriteFile(yamlPath, []byte(`
 default_provider: codex
 default_model: gpt-test
+thinking_level: high
+agent_timeout: 0
+codex_semantic_inactivity_timeout: 10m
+agent_idle_watchdog: 30m
+agent_tool_watchdog: 2h
+auto_priority: [codex, claude]
+mcp_config: .aioc/mcp.json
 env:
   AIOC_EXTRA: yes
 providers:
   codex:
     path: /bin/codex
     model: gpt-5.5
+    thinking_level: medium
+    max_turns: 12
+    args: ["--sandbox", "read-only"]
+    child_env:
+      CODEX_CHILD: value
   openai:
     base_url: http://127.0.0.1:8317/v1
     api_key: test-key
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	keys := []string{"AIOC_DEFAULT_PROVIDER", "AIOC_DEFAULT_MODEL", "AIOC_CLAUDE_PATH", "AIOC_CODEX_PATH", "AIOC_CODEX_MODEL", "AIOC_OPENAI_BASE_URL", "AIOC_OPENAI_API_KEY", "AIOC_EXTRA"}
+	keys := []string{"AIOC_DEFAULT_PROVIDER", "AIOC_DEFAULT_MODEL", "AIOC_THINKING_LEVEL", "AIOC_AGENT_TIMEOUT", "AIOC_CODEX_SEMANTIC_INACTIVITY_TIMEOUT", "AIOC_AGENT_IDLE_WATCHDOG", "AIOC_AGENT_TOOL_WATCHDOG", "AIOC_AUTO_PRIORITY", "AIOC_MCP_CONFIG", "AIOC_CLAUDE_PATH", "AIOC_CODEX_PATH", "AIOC_CODEX_MODEL", "AIOC_CODEX_THINKING_LEVEL", "AIOC_CODEX_MAX_TURNS", "AIOC_CODEX_ARGS", "AIOC_CODEX_ENV_CODEX_CHILD", "AIOC_OPENAI_BASE_URL", "AIOC_OPENAI_API_KEY", "AIOC_EXTRA"}
 	for _, key := range keys {
 		t.Setenv(key, "")
 		_ = os.Unsetenv(key)
@@ -41,18 +53,51 @@ providers:
 		t.Fatalf("paths = %v", res.Paths)
 	}
 	want := map[string]string{
-		"AIOC_DEFAULT_PROVIDER": "codex",
-		"AIOC_DEFAULT_MODEL":    "gpt-test",
-		"AIOC_CLAUDE_PATH":      "/bin/claude",
-		"AIOC_CODEX_PATH":       "/bin/codex",
-		"AIOC_CODEX_MODEL":      "gpt-5.5",
-		"AIOC_OPENAI_BASE_URL":  "http://127.0.0.1:8317/v1",
-		"AIOC_OPENAI_API_KEY":   "test-key",
-		"AIOC_EXTRA":            "yes",
+		"AIOC_DEFAULT_PROVIDER":                  "codex",
+		"AIOC_DEFAULT_MODEL":                     "gpt-test",
+		"AIOC_THINKING_LEVEL":                    "high",
+		"AIOC_AGENT_TIMEOUT":                     "0",
+		"AIOC_CODEX_SEMANTIC_INACTIVITY_TIMEOUT": "10m",
+		"AIOC_AGENT_IDLE_WATCHDOG":               "30m",
+		"AIOC_AGENT_TOOL_WATCHDOG":               "2h",
+		"AIOC_AUTO_PRIORITY":                     "codex,claude",
+		"AIOC_MCP_CONFIG":                        ".aioc/mcp.json",
+		"AIOC_CLAUDE_PATH":                       "/bin/claude",
+		"AIOC_CODEX_PATH":                        "/bin/codex",
+		"AIOC_CODEX_MODEL":                       "gpt-5.5",
+		"AIOC_CODEX_THINKING_LEVEL":              "medium",
+		"AIOC_CODEX_MAX_TURNS":                   "12",
+		"AIOC_CODEX_ARGS":                        "\"--sandbox\" \"read-only\"",
+		"AIOC_CODEX_ENV_CODEX_CHILD":             "value",
+		"AIOC_OPENAI_BASE_URL":                   "http://127.0.0.1:8317/v1",
+		"AIOC_OPENAI_API_KEY":                    "test-key",
+		"AIOC_EXTRA":                             "yes",
 	}
 	for key, value := range want {
 		if got := os.Getenv(key); got != value {
 			t.Fatalf("%s = %q, want %q", key, got, value)
+		}
+	}
+}
+
+func TestProjectDirsStopsAtGitRoot(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "repo")
+	sub := filepath.Join(root, "a", "b")
+	if err := os.MkdirAll(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	got := projectDirs(sub)
+	want := []string{root, filepath.Join(root, "a"), sub}
+	if len(got) != len(want) {
+		t.Fatalf("projectDirs = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("projectDirs = %v, want %v", got, want)
 		}
 	}
 }

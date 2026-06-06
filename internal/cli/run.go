@@ -8,8 +8,11 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strconv"
 	"strings"
+	"time"
 
+	aiocconfig "aioc/internal/config"
 	agentpkg "aioc/pkg/agent"
 	"aioc/pkg/events"
 	"aioc/pkg/provider"
@@ -33,12 +36,19 @@ func run(args []string) error {
 	systemFile := fs.String("system-file", "", "file containing system prompt")
 	promptFile := fs.String("prompt-file", "", "file containing prompt")
 	resumeSessionID := fs.String("resume", "", "resume session id")
-	timeout := fs.Duration("timeout", 0, "timeout")
-	mcpConfigPath := fs.String("mcp-config", "", "MCP config JSON file")
+	timeout := fs.Duration("timeout", defaultTimeout(), "timeout; default AIOC_AGENT_TIMEOUT")
+	inactivityTimeout := fs.Duration("inactivity-timeout", defaultInactivityTimeout(), "semantic inactivity timeout; default AIOC_CODEX_SEMANTIC_INACTIVITY_TIMEOUT")
+	idleWatchdog := fs.Duration("idle-watchdog", durationEnvOrZero("AIOC_AGENT_IDLE_WATCHDOG"), "force-stop when backend emits no messages for duration; default AIOC_AGENT_IDLE_WATCHDOG")
+	toolWatchdog := fs.Duration("tool-watchdog", durationEnvOrZero("AIOC_AGENT_TOOL_WATCHDOG"), "force-stop when one tool stays in flight silently for duration; default AIOC_AGENT_TOOL_WATCHDOG")
+	mcpConfigPath := fs.String("mcp-config", strings.TrimSpace(os.Getenv("AIOC_MCP_CONFIG")), "MCP config JSON file")
+	thinkingLevel := fs.String("thinking", strings.TrimSpace(os.Getenv("AIOC_THINKING_LEVEL")), "reasoning/thinking level")
+	maxTurns := fs.Int("max-turns", intEnv("AIOC_MAX_TURNS"), "max turns")
 	jsonl := fs.Bool("jsonl", true, "emit JSONL events on stdout")
 	var customArgs stringSliceFlag
+	var extraArgs stringSliceFlag
 	var envVars stringSliceFlag
-	fs.Var(&customArgs, "arg", "extra provider argument; repeatable")
+	fs.Var(&customArgs, "arg", "provider custom argument appended after config args; repeatable")
+	fs.Var(&extraArgs, "extra-arg", "provider default argument appended before --arg; repeatable")
 	fs.Var(&envVars, "env", "environment variable KEY=VALUE for agent; repeatable")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -72,6 +82,31 @@ func run(args []string) error {
 		}
 		*systemPrompt += string(b)
 	}
+
+	d := resolveDetection(*providerName)
+	if d.Status != "available" {
+		return fmt.Errorf("provider %q unavailable: %s", *providerName, d.Error)
+	}
+	providerEnvPrefix := providerEnvPrefix(d.Provider)
+	if *model == "" {
+		*model = providerDefaultModel(d.Provider)
+	}
+	if *thinkingLevel == "" {
+		*thinkingLevel = strings.TrimSpace(os.Getenv(providerEnvPrefix + "THINKING_LEVEL"))
+	}
+	if *maxTurns == 0 {
+		*maxTurns = intEnv(providerEnvPrefix + "MAX_TURNS")
+	}
+	if !flagPassed(fs, "mcp-config") {
+		if v := strings.TrimSpace(os.Getenv(providerEnvPrefix + "MCP_CONFIG")); v != "" {
+			*mcpConfigPath = v
+		}
+	}
+	if !flagPassed(fs, "inactivity-timeout") {
+		if v, ok := durationEnv(providerEnvPrefix + "SEMANTIC_INACTIVITY_TIMEOUT"); ok {
+			*inactivityTimeout = v
+		}
+	}
 	mcpConfig, err := readOptionalJSON(*mcpConfigPath)
 	if err != nil {
 		return err
@@ -80,15 +115,24 @@ func run(args []string) error {
 	if err != nil {
 		return err
 	}
-	d := resolveDetection(*providerName)
-	if d.Status != "available" {
-		return fmt.Errorf("provider %q unavailable: %s", *providerName, d.Error)
+	agentEnv = mergeEnv(agentEnv, providerChildEnv(d.Provider))
+	configExtraArgs, err := aiocconfig.ParseShellArgsEnv(providerEnvPrefix + "ARGS")
+	if err != nil {
+		return err
 	}
-	if *model == "" {
-		*model = providerDefaultModel(d.Provider)
+	configExtraArgs = append(configExtraArgs, []string(extraArgs)...)
+	if *thinkingLevel != "" {
+		ok, err := agentpkg.ValidateThinkingLevel(context.Background(), d.Provider, d.Path, *model, *thinkingLevel)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "warning: thinking_level catalog lookup failed; passing through: %v\n", err)
+		} else if !ok {
+			fmt.Fprintf(os.Stderr, "warning: thinking_level %q invalid for provider/model; skipping\n", *thinkingLevel)
+			*thinkingLevel = ""
+		}
 	}
 
-	ctx := context.Background()
+	ctx, agentCancel := context.WithCancel(context.Background())
+	defer agentCancel()
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	backend, err := agentpkg.New(d.Provider, agentpkg.Config{
 		ExecutablePath: d.Path,
@@ -100,16 +144,20 @@ func run(args []string) error {
 	}
 
 	w := events.NewWriter(os.Stdout)
-	_ = w.Write(events.Event{Type: events.TypeSession, Provider: d.Provider, Status: "starting", Meta: map[string]any{"path": d.Path, "protocol": d.Protocol, "cwd": *cwd, "launch": d.Launch}})
+	_ = w.Write(events.Event{Type: events.TypeSession, Provider: d.Provider, Status: "starting", Meta: map[string]any{"path": d.Path, "protocol": d.Protocol, "cwd": *cwd, "launch": d.Launch, "model": *model}})
 
 	session, err := backend.Execute(ctx, prompt, agentpkg.ExecOptions{
-		Cwd:             *cwd,
-		Model:           *model,
-		SystemPrompt:    strings.TrimSpace(*systemPrompt),
-		ResumeSessionID: *resumeSessionID,
-		CustomArgs:      []string(customArgs),
-		McpConfig:       mcpConfig,
-		Timeout:         *timeout,
+		Cwd:                       *cwd,
+		Model:                     *model,
+		SystemPrompt:              strings.TrimSpace(*systemPrompt),
+		MaxTurns:                  *maxTurns,
+		Timeout:                   *timeout,
+		SemanticInactivityTimeout: *inactivityTimeout,
+		ResumeSessionID:           *resumeSessionID,
+		ExtraArgs:                 configExtraArgs,
+		CustomArgs:                []string(customArgs),
+		McpConfig:                 mcpConfig,
+		ThinkingLevel:             *thinkingLevel,
 	})
 	if err != nil {
 		_ = w.Write(events.Event{Type: events.TypeError, Provider: d.Provider, Error: err.Error()})
@@ -117,21 +165,108 @@ func run(args []string) error {
 		return errSilent
 	}
 
-	for msg := range session.Messages {
-		_ = w.Write(convertAgentMessage(d.Provider, msg))
-	}
-
-	result, ok := <-session.Result
+	result, ok := drainSession(ctx, agentCancel, session, d.Provider, w, *timeout, *idleWatchdog, *toolWatchdog)
 	if !ok {
-		_ = w.Write(events.Event{Type: events.TypeDone, Provider: d.Provider, Status: "failed", Error: "agent result channel closed without result"})
 		return errSilent
 	}
 	if result.Status != "completed" {
-		_ = w.Write(events.Event{Type: events.TypeDone, Provider: d.Provider, SessionID: result.SessionID, Status: result.Status, Output: result.Output, Error: result.Error, DurationMS: result.DurationMs})
 		return errSilent
 	}
-	_ = w.Write(events.Event{Type: events.TypeDone, Provider: d.Provider, SessionID: result.SessionID, Status: result.Status, Output: result.Output, DurationMS: result.DurationMs})
 	return nil
+}
+
+func drainSession(ctx context.Context, cancel context.CancelFunc, session *agentpkg.Session, providerName string, w *events.Writer, timeout, idleWindow, toolWindow time.Duration) (agentpkg.Result, bool) {
+	drainCtx := ctx
+	var drainCancel context.CancelFunc
+	if timeout > 0 {
+		drainCtx, drainCancel = context.WithTimeout(ctx, timeout+30*time.Second)
+	} else {
+		drainCtx, drainCancel = context.WithCancel(ctx)
+	}
+	defer drainCancel()
+
+	lastActivity := time.Now()
+	inFlightTools := 0
+	idleFired := false
+	idleReason := ""
+	messagesOpen := true
+	messages := session.Messages
+	var tickerC <-chan time.Time
+	var ticker *time.Ticker
+	if idleWindow > 0 {
+		interval := idleWindow / 2
+		if idleWindow >= time.Minute && interval < 30*time.Second {
+			interval = 30 * time.Second
+		}
+		if interval <= 0 {
+			interval = idleWindow
+		}
+		ticker = time.NewTicker(interval)
+		defer ticker.Stop()
+		tickerC = ticker.C
+	}
+
+	for {
+		select {
+		case msg, ok := <-messages:
+			if !ok {
+				messagesOpen = false
+				messages = nil
+				continue
+			}
+			lastActivity = time.Now()
+			switch msg.Type {
+			case agentpkg.MessageToolUse:
+				inFlightTools++
+			case agentpkg.MessageToolResult:
+				if inFlightTools > 0 {
+					inFlightTools--
+				}
+			}
+			_ = w.Write(convertAgentMessage(providerName, msg))
+		case result, ok := <-session.Result:
+			if !ok {
+				_ = w.Write(events.Event{Type: events.TypeDone, Provider: providerName, Status: "failed", Error: "agent result channel closed without result"})
+				return agentpkg.Result{}, false
+			}
+			if idleFired {
+				result.Status = "idle_watchdog"
+				if result.Error == "" {
+					result.Error = idleReason
+				}
+			}
+			_ = w.Write(events.Event{Type: events.TypeDone, Provider: providerName, SessionID: result.SessionID, Status: result.Status, Output: result.Output, Error: result.Error, DurationMS: result.DurationMs, Usage: convertUsage(result.Usage)})
+			return result, result.Status == "completed"
+		case <-tickerC:
+			threshold := idleWindow
+			if inFlightTools > 0 {
+				if toolWindow <= 0 {
+					continue
+				}
+				threshold = toolWindow
+			}
+			if threshold > 0 && time.Since(lastActivity) >= threshold && (!messagesOpen || len(session.Messages) == 0) {
+				idleFired = true
+				idleReason = fmt.Sprintf("agent produced no new messages for %s and message queue was empty; force-stopped by idle watchdog", threshold)
+				cancel()
+			}
+		case <-drainCtx.Done():
+			if idleFired {
+				result := agentpkg.Result{Status: "idle_watchdog", Error: idleReason}
+				_ = w.Write(events.Event{Type: events.TypeDone, Provider: providerName, Status: result.Status, Error: result.Error})
+				return result, false
+			}
+			status := "cancelled"
+			err := "agent run cancelled"
+			if errors.Is(drainCtx.Err(), context.DeadlineExceeded) {
+				status = "timeout"
+				err = "agent did not produce result within drain timeout"
+			}
+			result := agentpkg.Result{Status: status, Error: err}
+			_ = w.Write(events.Event{Type: events.TypeDone, Provider: providerName, Status: result.Status, Error: result.Error})
+			return result, false
+		}
+	}
 }
 
 func readOptionalJSON(path string) (json.RawMessage, error) {
@@ -150,10 +285,7 @@ func readOptionalJSON(path string) (json.RawMessage, error) {
 }
 
 func parseEnvFlags(values []string) (map[string]string, error) {
-	if len(values) == 0 {
-		return nil, nil
-	}
-	out := make(map[string]string, len(values))
+	out := map[string]string{}
 	for _, v := range values {
 		key, val, ok := strings.Cut(v, "=")
 		key = strings.TrimSpace(key)
@@ -162,7 +294,23 @@ func parseEnvFlags(values []string) (map[string]string, error) {
 		}
 		out[key] = val
 	}
+	if len(out) == 0 {
+		return nil, nil
+	}
 	return out, nil
+}
+
+func mergeEnv(base, overlay map[string]string) map[string]string {
+	if len(overlay) == 0 {
+		return base
+	}
+	if base == nil {
+		base = map[string]string{}
+	}
+	for k, v := range overlay {
+		base[k] = v
+	}
+	return base
 }
 
 func defaultProvider() string {
@@ -176,22 +324,109 @@ func defaultModel() string {
 	return strings.TrimSpace(os.Getenv("AIOC_DEFAULT_MODEL"))
 }
 
+func defaultTimeout() time.Duration {
+	if v, ok := durationEnv("AIOC_AGENT_TIMEOUT"); ok {
+		return v
+	}
+	return 0
+}
+
+func defaultInactivityTimeout() time.Duration {
+	if v, ok := durationEnv("AIOC_CODEX_SEMANTIC_INACTIVITY_TIMEOUT"); ok {
+		return v
+	}
+	return 10 * time.Minute
+}
+
+func durationEnvOrZero(name string) time.Duration {
+	if v, ok := durationEnv(name); ok {
+		return v
+	}
+	return 0
+}
+
+func durationEnv(name string) (time.Duration, bool) {
+	v := strings.TrimSpace(os.Getenv(name))
+	if v == "" {
+		return 0, false
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		return 0, false
+	}
+	return d, true
+}
+
+func intEnv(name string) int {
+	v := strings.TrimSpace(os.Getenv(name))
+	if v == "" {
+		return 0
+	}
+	n, _ := strconv.Atoi(v)
+	return n
+}
+
 func providerDefaultModel(providerName string) string {
-	key := "AIOC_" + strings.ToUpper(strings.ReplaceAll(strings.ReplaceAll(providerName, "-", "_"), ".", "_")) + "_MODEL"
-	return strings.TrimSpace(os.Getenv(key))
+	return strings.TrimSpace(os.Getenv(providerEnvPrefix(providerName) + "MODEL"))
+}
+
+func providerEnvPrefix(providerName string) string {
+	return "AIOC_" + strings.ToUpper(strings.ReplaceAll(strings.ReplaceAll(providerName, "-", "_"), ".", "_")) + "_"
+}
+
+func providerChildEnv(providerName string) map[string]string {
+	prefix := providerEnvPrefix(providerName) + "ENV_"
+	out := map[string]string{}
+	for _, kv := range os.Environ() {
+		key, val, ok := strings.Cut(kv, "=")
+		if !ok || !strings.HasPrefix(key, prefix) {
+			continue
+		}
+		childKey := strings.TrimPrefix(key, prefix)
+		if childKey != "" {
+			out[childKey] = val
+		}
+	}
+	return out
+}
+
+func flagPassed(fs *flag.FlagSet, name string) bool {
+	passed := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == name {
+			passed = true
+		}
+	})
+	return passed
+}
+
+func autoPriority() []string {
+	if raw := strings.TrimSpace(os.Getenv("AIOC_AUTO_PRIORITY")); raw != "" {
+		parts := strings.Split(raw, ",")
+		out := []string{}
+		for _, p := range parts {
+			p = strings.TrimSpace(p)
+			if p != "" {
+				out = append(out, p)
+			}
+		}
+		if len(out) > 0 {
+			return out
+		}
+	}
+	return []string{"claude", "codex", "pi", "gemini", "cursor", "kimi", "hermes", "kiro", "opencode", "openclaw", "copilot", "antigravity"}
 }
 
 func resolveDetection(name string) provider.Detection {
 	if name != "auto" {
 		return findDetection(name)
 	}
-	priority := []string{"claude", "codex", "pi", "gemini", "cursor", "kimi", "hermes", "kiro", "opencode", "openclaw", "copilot", "antigravity"}
 	detections := provider.DetectAll(context.Background())
 	byName := map[string]provider.Detection{}
 	for _, d := range detections {
 		byName[d.Provider] = d
 	}
-	for _, p := range priority {
+	for _, p := range autoPriority() {
 		if d, ok := byName[p]; ok && d.Status == "available" {
 			return d
 		}
@@ -218,6 +453,22 @@ func convertAgentMessage(providerName string, msg agentpkg.Message) events.Event
 	default:
 		return events.Event{Type: events.TypeStatus, Provider: providerName, Status: msg.Content, SessionID: msg.SessionID}
 	}
+}
+
+func convertUsage(usage map[string]agentpkg.TokenUsage) map[string]events.TokenUsage {
+	if len(usage) == 0 {
+		return nil
+	}
+	out := map[string]events.TokenUsage{}
+	for model, u := range usage {
+		out[model] = events.TokenUsage{
+			InputTokens:      u.InputTokens,
+			OutputTokens:     u.OutputTokens,
+			CacheReadTokens:  u.CacheReadTokens,
+			CacheWriteTokens: u.CacheWriteTokens,
+		}
+	}
+	return out
 }
 
 func findDetection(name string) provider.Detection {
