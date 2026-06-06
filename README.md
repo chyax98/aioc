@@ -177,10 +177,26 @@ aioc skills install --dir ~/.agents/skills
 
 ## Development
 
+AIOC pins Go with Proto:
+
+```text
+.prototools -> go = "1.26.1"
+```
+
+Use system Go:
+
 ```bash
 make test
 make build
 make check
+```
+
+Use Proto-pinned Go:
+
+```bash
+proto install
+make proto-check
+# or: proto exec go -- make check
 ```
 
 Project layout:
